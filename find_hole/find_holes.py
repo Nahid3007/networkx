@@ -6,19 +6,23 @@ import os
 
 class Node:
     def __init__(self, nid: int):
-        self.nid = nid
+        self.nid = int(nid)
         self.coordinates = []
 
 class Element:
     def __init__(self, eid: int):
-        self.eid = eid
+        self.eid = int(eid)
         self.attached_nodes = []
 
 class Edge:
-    def __init__(self, edge_id: int, eid: int):
-        self.edge_id = edge_id
-        self.eid = eid
+    def __init__(self, edge_id: int, attached_eid: int):
+        self.edge_id = int(edge_id)
+        self.attached_eid = int(attached_eid)
         self.attached_nodes = []
+        self.vector = []
+        
+    def __repr__(self):
+        return f"Edge(edge_id={self.edge_id}, attached_eid={self.attached_eid}, attached_nodes={self.attached_nodes})"
 
 def parse_input_deck(input_file):
     """Parse the input deck to extract nodes, elements, and edges."""
@@ -42,32 +46,29 @@ def parse_input_deck(input_file):
             node_block = True
             element_block = False
             continue
-
         # Detect start of element block
         if line.lower().startswith("*element"):
             element_block = True
             node_block = False
             continue
-
         # Skip comments
         if line.startswith('**'):
             node_block = False
             element_block = False
             continue
-
         # Parse nodes
         if node_block:
             parts = line.split(',')
             node_id = int(parts[0])
             nodes[node_id] = Node(node_id)
-            nodes[node_id].coordinates = [float(i) for i in parts[1:]]
+            nodes[node_id].coordinates = np.array([float(i) for i in parts[1:]])
 
         # Parse elements and edges
         if element_block:
             parts = line.split(',')
             element_id = int(parts[0])
             elements[element_id] = Element(element_id)
-            elements[element_id].attached_nodes = [int(i) for i in parts[1:]]
+            elements[element_id].attached_nodes = np.array([int(i) for i in parts[1:]])
 
             # Create edges for the element
             num_nodes = len(elements[element_id].attached_nodes)
@@ -75,62 +76,78 @@ def parse_input_deck(input_file):
                 node_start = elements[element_id].attached_nodes[i]
                 node_end = elements[element_id].attached_nodes[(i + 1) % num_nodes]  # Loop back to start for last edge
                 edges[edge_id] = Edge(edge_id, element_id)
-                edges[edge_id].attached_nodes = [node_start, node_end]
+                edges[edge_id].attached_nodes = np.array([node_start, node_end])
+                
+                pA = nodes[node_start].coordinates
+                pB = nodes[node_end].coordinates
+                
+                edges[edge_id].vector = (pA-pB)/np.linalg.norm(pA-pB)
+                
                 edge_id += 1
 
     return nodes, elements, edges
 
-
-
-def find_node_pairs_with_single_edge(edges):
-    """
-    Use NetworkX to find node pairs that share exactly one edge.
+def angle_between_vectors(vector1, vector2):
+    """Calculate the angle (in degrees) between two vectors."""
+    # Compute the dot product
+    dot_product = np.dot(vector1, vector2)
+    # Clamp the dot product to avoid numerical issues
+    dot_product = np.clip(dot_product, -1.0, 1.0)
     
-    Args:
-        edges (dict): A dictionary of edges where key is edge_id and value is Edge object.
-    
-    Returns:
-        dict: A dictionary where the key is a node pair (tuple) and the value is the corresponding edge ID.
-    """
-    # Step 1: Create a graph
-    G = nx.MultiGraph()  # MultiGraph allows multiple edges between the same nodes
-    
-    # Add edges to the graph
-    for edge_id, edge in edges.items():
-        node_pair = tuple(sorted(edge.attached_nodes))  # Ensure consistent ordering
-        G.add_edge(node_pair[0], node_pair[1], edge_id=edge_id)
-    
-    # Step 2: Find node pairs with exactly one edge
-    single_edge_node_pairs = {}
-    
-    for u, v, data in G.edges(data=True):
-        # Check if there's only one edge between the nodes
-        if G.number_of_edges(u, v) == 1:
-            edge_id = data["edge_id"]  # Get the edge ID from edge data
-            single_edge_node_pairs[(u, v)] = edge_id
+    return (np.arccos(dot_product)/np.pi)*180
 
-    return single_edge_node_pairs
+def detect_holes(edges):    
+    
+    nodes_to_edge_map = defaultdict(set)
+    for edge in edges.values():        
+        nodes_to_edge_map[tuple(sorted(edge.attached_nodes))].add(edge.edge_id)
+        # print(edge.edge_id, edge.attached_eid, edge.attached_nodes, edge.vector)
 
+    single_edges = defaultdict(set)
+    for i in nodes_to_edge_map.values():
+        if len(i) < 2:
+            single_edges["single_edge"].add(list(i)[0])
+    
+    # Initialize graph
+    graph = nx.Graph()
+    for edge_id1, edge_id2 in itertools.combinations(single_edges["single_edge"], 2):
+        edge1 = edges[edge_id1]
+        edge2 = edges[edge_id2]
 
+        # Check if edges share a node
+        if len(set(edge1.attached_nodes) & set(edge2.attached_nodes)) > 0:
+            # Check if edges are approximately parallel
+            angle = angle_between_vectors(edge1.vector, edge2.vector)
+            if angle not in [0,90,180,-90,-180]:  # Adjust the threshold for "parallelism"
+                graph.add_edge(edge_id1, edge_id2)
+    
+    # Find connected components
+    hole_groups = list(nx.connected_components(graph))
 
-# def cala
+    return hole_groups
 
 def main(input_file):
-    nodes, elements, edges = parse_input_deck(input_file)
-
-    # Example debug outputs
-    print(f"Parsed {len(nodes)} nodes.")
-    print(f"Parsed {len(elements)} elements.")
-    print(f"Generated {len(edges)} edges.")
-
-    # Find node pairs that share exactly one edge
-    single_edge_node_pairs = find_node_pairs_with_single_edge(edges)
     
-    print(f"Node pairs sharing exactly one edge: ")
-    for k,v in single_edge_node_pairs.items():
-        print(k,v)
+    print(f"Parsing input deck '{input_file}' ...")
+    nodes, elements, edges = parse_input_deck(input_file)
+    
+    print(f'')
 
-# Example usage
+    print(f"    Parsed {len(nodes)} nodes.")
+    print(f"    Parsed {len(elements)} elements.")
+    print(f"    Generated {len(edges)} edges.")
+
+    print(f'')
+    
+    hole_groups = detect_holes(edges)
+    
+    print(f"    Found {len(hole_groups)} holes in component.")
+    print(hole_groups)
+    
+    print(f'Done.')
+
+#------------------------------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    input_file = "plate_w_hole.inp"  # Replace with your Abaqus input deck file
+    input_file = "plate_w_hole2.inp"  
     main(input_file)
