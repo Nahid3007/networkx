@@ -106,10 +106,9 @@ The `main()` function orchestrates the workflow by:
 
 ### Nastran Format (`mesh.bdf`):
 ```
-GRID    1       0.0     0.0     0.0
-GRID    2       1.0     0.0     0.0
+GRID         852        44.0835917.94091     0.5
 ...
-CTRIA3  1       1       2       3       4
+CTRIA3        11       0     265     262     266
 ...
 ```
 
